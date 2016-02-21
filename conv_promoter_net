@@ -1,0 +1,78 @@
+#Input for this is in the form of a list of tuples, where each tuple has two positions, the first position is an ND.array which is 
+#4xthe length of the promoter sequence represented, where A,G,C,T is the order (so if position 0 is 1, then it is an A, there is only one
+#one for every 4 nucleotides)
+#In second position is an NDarray containing the expression data for all the cell types, in which each position in the 1D tensor represents 
+#a different cell type
+
+#Import modules
+import tensorflow as tf 
+import numpy as np
+import pickle 
+
+#Import data and extract information about the size of it
+input_data = pickle.load(open('promoters_microarray.p','rb'))
+number_of_microarrays = input_data[0][1].shape[0]
+promoter_size = input_data[0][0].shape[0]
+#Turn the list of tuples into two NDarrays
+(promoters,microarrays) = zip(*input_data)
+(all_promoters,all_microarrays) = np.asarray(promoters),np.asarray(microarrays)
+all_promoters = all_promoters.astype(np.float32)
+all_microarrays = all_microarrays.astype(np.float32)
+
+#Turn on session
+sess = tf.InteractiveSession()
+
+#Placeholders for input
+x = tf.placeholder(tf.float32,shape=(None,promoter_size),name='x')
+y = tf.placeholder(tf.float32,shape=(None,number_of_microarrays),name='y')
+
+#Reset these to change # of nodes in each layer
+w1_stepsize = 5
+l1_features = 30
+h1_nodes = 1000
+
+#Make functions to make layermaking easier
+def weight_variable(shape):
+	return tf.Variable(tf.truncated_normal(shape,stddev=0.35,dtype=tf.float32))
+
+def bias_variable(shape):
+	return tf.Variable(tf.constant(0.1,shape=shape,dtype=tf.float32))
+
+def conv2d(x,W):
+	return tf.nn.conv2d(x,W,strides = [1,1,1,1],padding='SAME')
+
+#Layer 1, convolution
+w_conv1 = weight_variable([5,1,1,32])
+b_conv1 = bias_variable([32])
+x_reshape1 = tf.reshape(x,[-1,promoter_size,1,1])
+l1_conv = tf.nn.relu(conv2d(x_reshape1,w_conv1)+b_conv1)
+
+#Layer 2, hidden
+w_fc1 = weight_variable([(promoter_size)*32,h1_nodes])
+b_fc1 = bias_variable([h1_nodes])
+l1_conv_reshape = tf.reshape(l1_conv,[-1,(promoter_size)*32])
+h_fc1 = tf.nn.relu(tf.matmul(l1_conv_reshape,w_fc1)+b_fc1)
+
+#Dropout before Layer 3
+keep_prob = tf.placeholder(tf.float32)
+h_fc1_drop = tf.nn.dropout(h_fc1,keep_prob)
+
+#Layer 3, final
+w_fc2 = weight_variable([h1_nodes,number_of_microarrays])
+b_fc2 = bias_variable([number_of_microarrays])
+y_conv = tf.nn.softmax(tf.matmul(h_fc1_drop,w_fc2)+b_fc2)
+
+#Initialize variables
+#sess.run(tf.initialize_all_variables())
+
+#Cost function and training
+cost_function = -tf.reduce_sum(y*tf.log(tf.clip_by_value(y_conv,1e-10,1.0)))
+train_step = tf.train.AdamOptimizer(1e-4).minimize(cost_function)
+correct_prediction = cost_function
+sess.run(tf.initialize_all_variables())
+for i in xrange(100):
+	batch = (all_promoters[50*i:50*(i+1)],all_microarrays[50*i:50*(i+1)])
+	if i%10==0:
+		print "Step %d, cross entropy " %(i)
+		print cost_function.eval(feed_dict={x:batch[0], y: batch[1], keep_prob: 1.0})
+	train_step.run(feed_dict={x:batch[0],y:batch[1],keep_prob:0.5})
